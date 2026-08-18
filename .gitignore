@@ -1,0 +1,43 @@
+# JavaScript build output and dependencies
+node_modules/
+dist/
+.vite/
+
+# Downloaded and generated runtimes
+.runtime-cache/
+runtime/node/
+runtime/licenses/
+
+# Local application and test data
+.dev-data/
+.bundle-test-data/
+.dbg/
+
+# Rust and Tauri build output
+src-tauri/target/
+src-tauri/gen/
+
+# Release packages and local UI comparisons
+artifacts/
+ui-audit/
+
+# Local build VM tooling
+scripts/setup-macos-build-vm.sh
+scripts/.DS_Store
+
+# Local configuration and credentials
+.env
+.env.*
+!.env.example
+*.key
+*.pem
+*.p12
+*.pfx
+*.mobileprovision
+
+# OS, editor, and diagnostic files
+.DS_Store
+*.log
+*.rs.bk
+.idea/
+*.swp

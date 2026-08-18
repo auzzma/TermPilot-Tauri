@@ -1,0 +1,61 @@
+name: Tauri CI
+
+on:
+  push:
+    branches: ["main"]
+  pull_request:
+
+jobs:
+  verify:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            bundle: app
+          - os: windows-latest
+            bundle: nsis
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy,rustfmt
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Frontend tests
+        run: npm test
+
+      - name: Bridge smoke tests
+        run: npm run test:bridge
+
+      - name: Frontend build
+        run: npm run build
+
+      - name: Rust format
+        run: cargo fmt --manifest-path src-tauri/Cargo.toml --all -- --check
+
+      - name: Rust lint
+        run: cargo clippy --manifest-path src-tauri/Cargo.toml --all-targets -- -D warnings
+
+      - name: Rust tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml --all-targets
+
+      - name: Prepare Node sidecar
+        run: npm run prepare:bridge
+
+      - name: Build native bundle
+        run: npm run tauri -- build --debug --bundles ${{ matrix.bundle }}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: termpilot-${{ runner.os }}
+          path: src-tauri/target/debug/bundle/

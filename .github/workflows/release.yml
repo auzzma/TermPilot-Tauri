@@ -1,0 +1,96 @@
+name: Tauri Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    outputs:
+      value: ${{ steps.version.outputs.value }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Verify release version
+        id: version
+        shell: bash
+        run: |
+          source_version="$(node -p "JSON.parse(require('fs').readFileSync('src-tauri/tauri.conf.json', 'utf8')).version")"
+          tag_version="${GITHUB_REF_NAME#v}"
+          if [[ "$tag_version" != "$source_version" ]]; then
+            echo "Tag version $tag_version does not match tauri.conf.json version $source_version" >&2
+            exit 1
+          fi
+          echo "value=$source_version" >> "$GITHUB_OUTPUT"
+
+  build:
+    needs: version
+    runs-on: macos-26
+    env:
+      VERSION: ${{ needs.version.outputs.value }}
+      BUILD_NUMBER: ${{ github.run_number }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin,x86_64-pc-windows-msvc
+
+      - name: Install cargo-xwin
+        run: cargo install cargo-xwin --version 0.23.0 --locked
+
+      - name: Install NSIS
+        run: brew install nsis
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and validate release artifacts
+        run: bash scripts/build-release-validation.sh "$VERSION" "$BUILD_NUMBER"
+
+      - name: Upload release artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: termpilot-release-assets
+          path: |
+            artifacts/release-validation/TermPilot-${{ env.VERSION }}-macos-arm64.zip
+            artifacts/release-validation/TermPilot-${{ env.VERSION }}-macos-amd64.zip
+            artifacts/release-validation/TermPilot-${{ env.VERSION }}-windows-x64-portable.zip
+            artifacts/release-validation/SHA256SUMS.txt
+          if-no-files-found: error
+
+  release:
+    needs: [version, build]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: termpilot-release-assets
+          path: release
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          name: TermPilot ${{ needs.version.outputs.value }}
+          generate_release_notes: true
+          fail_on_unmatched_files: true
+          files: |
+            release/TermPilot-${{ needs.version.outputs.value }}-macos-arm64.zip
+            release/TermPilot-${{ needs.version.outputs.value }}-macos-amd64.zip
+            release/TermPilot-${{ needs.version.outputs.value }}-windows-x64-portable.zip
+            release/SHA256SUMS.txt

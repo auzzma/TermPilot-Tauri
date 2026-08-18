@@ -1,0 +1,904 @@
+diff --git a/node_modules/ssh2/lib/agent.js b/node_modules/ssh2/lib/agent.js
+index bb495d1..c0d5def 100644
+--- a/node_modules/ssh2/lib/agent.js
++++ b/node_modules/ssh2/lib/agent.js
+@@ -711,7 +711,10 @@ const AgentProtocol = (() => {
+                 hash: undefined,
+               };
+               let ctx;
+-              if (pubKey.type === 'ssh-rsa') {
++              if (pubKey.type === 'ssh-rsa'
++                  || pubKey.type === 'ssh-rsa-cert-v01@openssh.com'
++                  || pubKey.type === 'rsa-sha2-256-cert-v01@openssh.com'
++                  || pubKey.type === 'rsa-sha2-512-cert-v01@openssh.com') {
+                 if (flagsVal & SSH_AGENT_RSA_SHA2_256) {
+                   ctx = 'rsa-sha2-256';
+                   flags.hash = 'sha256';
+@@ -781,7 +784,11 @@ const AgentProtocol = (() => {
+       if (pubKey instanceof Error)
+         throw new Error('Invalid public key argument');
+ 
+-      if (pubKey.type === 'ssh-rsa' && options) {
++      if ((pubKey.type === 'ssh-rsa'
++           || pubKey.type === 'ssh-rsa-cert-v01@openssh.com'
++           || pubKey.type === 'rsa-sha2-256-cert-v01@openssh.com'
++           || pubKey.type === 'rsa-sha2-512-cert-v01@openssh.com')
++          && options) {
+         switch (options.hash) {
+           case 'sha256':
+             flags = SSH_AGENT_RSA_SHA2_256;
+diff --git a/node_modules/ssh2/lib/client.js b/node_modules/ssh2/lib/client.js
+index 7291c2c..8943c9a 100644
+--- a/node_modules/ssh2/lib/client.js
++++ b/node_modules/ssh2/lib/client.js
+@@ -2170,6 +2170,29 @@ function getKeyAlgos(client, key, serverSigAlgs) {
+           return [];
+       }
+       return [['ssh-rsa', 'sha1']];
++
++    // OpenSSH RSA user certificates
++    // - publickey algorithm name must be the *cert* variant
++    // - signature algorithm uses the non-cert variant (handled in Protocol.js)
++    case 'ssh-rsa-cert-v01@openssh.com':
++    case 'rsa-sha2-256-cert-v01@openssh.com':
++    case 'rsa-sha2-512-cert-v01@openssh.com':
++      if (client._protocol._compatFlags & COMPAT.IMPLY_RSA_SHA2_SIGALGS) {
++        if (!Array.isArray(serverSigAlgs))
++          serverSigAlgs = ['rsa-sha2-256', 'rsa-sha2-512'];
++        else
++          serverSigAlgs = ['rsa-sha2-256', 'rsa-sha2-512', ...serverSigAlgs];
++      }
++      if (Array.isArray(serverSigAlgs)) {
++        // Prefer SHA-512 when available (matches modern OpenSSH default)
++        if (serverSigAlgs.indexOf('rsa-sha2-512') !== -1)
++          return [['rsa-sha2-512-cert-v01@openssh.com', 'sha512']];
++        if (serverSigAlgs.indexOf('rsa-sha2-256') !== -1)
++          return [['rsa-sha2-256-cert-v01@openssh.com', 'sha256']];
++        if (serverSigAlgs.indexOf('ssh-rsa') === -1)
++          return [];
++      }
++      return [['ssh-rsa-cert-v01@openssh.com', 'sha1']];
+   }
+ }
+ 
+diff --git a/node_modules/ssh2/lib/protocol/Protocol.js b/node_modules/ssh2/lib/protocol/Protocol.js
+index 7302488..634acdd 100644
+--- a/node_modules/ssh2/lib/protocol/Protocol.js
++++ b/node_modules/ssh2/lib/protocol/Protocol.js
+@@ -701,11 +701,19 @@ class Protocol {
+       if (signature === false)
+         throw new Error('Error while converting handshake signature');
+ 
++      let sigAlgo = keyAlgo;
++      if (signature && typeof signature === 'object' && signature._signatureAlgorithm)
++        sigAlgo = signature._signatureAlgorithm;
++      else if (typeof keyAlgo === 'string'
++               && keyAlgo.endsWith('-cert-v01@openssh.com'))
++        sigAlgo = keyAlgo.slice(0, -'-cert-v01@openssh.com'.length);
++
+       const sigLen = signature.length;
++      const sigAlgoLen = Buffer.byteLength(sigAlgo);
+       p = this._packetRW.write.allocStart;
+       packet = this._packetRW.write.alloc(
+         1 + 4 + userLen + 4 + 14 + 4 + 9 + 1 + 4 + algoLen + 4 + pubKeyLen + 4
+-          + 4 + algoLen + 4 + sigLen
++          + 4 + sigAlgoLen + 4 + sigLen
+       );
+ 
+       // TODO: simply copy from original "packet" to new `packet` to avoid
+@@ -729,12 +737,12 @@ class Protocol {
+       writeUInt32BE(packet, pubKeyLen, p += algoLen);
+       packet.set(pubKey, p += 4);
+ 
+-      writeUInt32BE(packet, 4 + algoLen + 4 + sigLen, p += pubKeyLen);
++      writeUInt32BE(packet, 4 + sigAlgoLen + 4 + sigLen, p += pubKeyLen);
+ 
+-      writeUInt32BE(packet, algoLen, p += 4);
+-      packet.utf8Write(keyAlgo, p += 4, algoLen);
++      writeUInt32BE(packet, sigAlgoLen, p += 4);
++      packet.utf8Write(sigAlgo, p += 4, sigAlgoLen);
+ 
+-      writeUInt32BE(packet, sigLen, p += algoLen);
++      writeUInt32BE(packet, sigLen, p += sigAlgoLen);
+       packet.set(signature, p += 4);
+ 
+       // Servers shouldn't send packet type 60 in response to signed publickey
+@@ -810,19 +818,27 @@ class Protocol {
+       if (!signature)
+         throw new Error('Error while converting handshake signature');
+ 
++      let sigAlgo = keyAlgo;
++      if (signature && typeof signature === 'object' && signature._signatureAlgorithm)
++        sigAlgo = signature._signatureAlgorithm;
++      else if (typeof keyAlgo === 'string'
++               && keyAlgo.endsWith('-cert-v01@openssh.com'))
++        sigAlgo = keyAlgo.slice(0, -'-cert-v01@openssh.com'.length);
++
+       const sigLen = signature.length;
++      const sigAlgoLen = Buffer.byteLength(sigAlgo);
+       const reqDataLen = (data.length - sesLen - 4);
+       p = this._packetRW.write.allocStart;
+       const packet = this._packetRW.write.alloc(
+-        reqDataLen + 4 + 4 + algoLen + 4 + sigLen
++        reqDataLen + 4 + 4 + sigAlgoLen + 4 + sigLen
+       );
+ 
+       bufferCopy(data, packet, 4 + sesLen, data.length, p);
+ 
+-      writeUInt32BE(packet, 4 + algoLen + 4 + sigLen, p += reqDataLen);
+-      writeUInt32BE(packet, algoLen, p += 4);
+-      packet.utf8Write(keyAlgo, p += 4, algoLen);
+-      writeUInt32BE(packet, sigLen, p += algoLen);
++      writeUInt32BE(packet, 4 + sigAlgoLen + 4 + sigLen, p += reqDataLen);
++      writeUInt32BE(packet, sigAlgoLen, p += 4);
++      packet.utf8Write(sigAlgo, p += 4, sigAlgoLen);
++      writeUInt32BE(packet, sigLen, p += sigAlgoLen);
+       packet.set(signature, p += 4);
+ 
+       this._authsQueue.push('hostbased');
+@@ -1916,7 +1932,10 @@ class Protocol {
+ }
+ 
+ // SSH-protoversion-softwareversion (SP comments) CR LF
+-const RE_IDENT = /^SSH-(2\.0|1\.99)-([^ ]+)(?: (.*))?$/;
++// RFC 4253 requires a non-empty softwareversion, but some embedded SSH
++// daemons send "SSH-2.0-" with an empty token. Accept that specific
++// compatibility case while still rejecting whitespace in the token itself.
++const RE_IDENT = /^SSH-(2\.0|1\.99)-([^ ]*)(?: (.*))?$/;
+ 
+ // TODO: optimize this by starting n bytes from the end of this._buffer instead
+ // of the beginning
+diff --git a/node_modules/ssh2/lib/protocol/SFTP.js b/node_modules/ssh2/lib/protocol/SFTP.js
+index 9f33c02..9751164 100644
+--- a/node_modules/ssh2/lib/protocol/SFTP.js
++++ b/node_modules/ssh2/lib/protocol/SFTP.js
+@@ -117,6 +117,20 @@ const OPENSSH_MAX_PKT_LEN = 256 * 1024;
+ 
+ const bufferParser = makeBufferParser();
+ 
++function getStringLen(value, encoding) {
++  if (Buffer.isBuffer(value)) return value.length;
++  // Honor encoding parameter if provided, otherwise default to UTF-8
++  return encoding ? Buffer.byteLength(value, encoding) : Buffer.byteLength(value);
++}
++
++function writeString(buf, offset, value, len) {
++  if (Buffer.isBuffer(value)) {
++    buf.set(value, offset);
++    return len ?? value.length;
++  }
++  return buf.utf8Write(value, offset, len ?? Buffer.byteLength(value));
++}
++
+ const fakeStderr = {
+   readable: false,
+   writable: false,
+@@ -155,6 +169,8 @@ class SFTP extends EventEmitter {
+     this._writeReqid = -1;
+     this._requests = {};
+     this._maxInPktLen = OPENSSH_MAX_PKT_LEN;
++    this._preambleSkipped = false; // Track if we've found the start of SFTP binary data
++    this._preambleBuf = null; // Buffer for partial preamble data across frames
+     this._maxOutPktLen = 34000;
+     this._maxReadLen =
+       (this._isOpenSSH ? OPENSSH_MAX_PKT_LEN : 34000) - PKT_RW_OVERHEAD;
+@@ -196,6 +212,53 @@ class SFTP extends EventEmitter {
+       this.emit('end');
+       return;
+     }
++
++    // Skip non-SFTP preamble data (e.g. MOTD/banner text from misconfigured servers)
++    // Only applies to client mode; server mode expects SSH_FXP_INIT directly.
++    if (!this._preambleSkipped) {
++      if (this.server) {
++        // Server mode: no preamble skipping, proceed to normal parsing
++        this._preambleSkipped = true;
++      } else {
++        // Concatenate with any previously buffered partial data
++        if (this._preambleBuf) {
++          data = Buffer.concat([this._preambleBuf, data]);
++          this._preambleBuf = null;
++        }
++
++        // Look for the start of a valid SFTP packet in the data.
++        // The first SFTP packet from the server is SSH_FXP_VERSION (type=2).
++        // Format: uint32 length, byte type=0x02, uint32 version, ...
++        // The length should be >= 5 (1 byte type + 4 bytes version).
++        let found = -1;
++        for (let i = 0; i <= data.length - 5; i++) {
++          const len = (data[i] << 24) | (data[i+1] << 16) | (data[i+2] << 8) | data[i+3];
++          if (len >= 5 && len <= this._maxInPktLen && data[i+4] === 0x02) {
++            found = i;
++            break;
++          }
++        }
++        if (found === -1) {
++          // No valid SFTP packet header found yet.
++          // Keep up to the last 4 bytes in case a valid header spans this and the
++          // next chunk (the uint32 length could be split across frames).
++          const keep = Math.min(data.length, 4);
++          this._preambleBuf = Buffer.from(data.slice(data.length - keep));
++          this._debug && this._debug(
++            'SFTP: Skipping non-SFTP preamble data (' + data.length + ' bytes, buffered last ' + keep + ')'
++          );
++          return;
++        }
++        if (found > 0) {
++          this._debug && this._debug(
++            'SFTP: Skipped ' + found + ' bytes of non-SFTP preamble data'
++          );
++          data = data.slice(found);
++        }
++        this._preambleSkipped = true;
++      }
++    }
++
+     /*
+         uint32             length
+         byte               type
+@@ -339,7 +402,7 @@ class SFTP extends EventEmitter {
+       uint32        pflags
+       ATTRS         attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + 4 + attrsLen);
+ 
+@@ -349,7 +412,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     writeUInt32BE(buf, attrsFlags, p += 4);
+     if (attrsLen) {
+@@ -734,7 +797,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     filename
+     */
+-    const fnameLen = Buffer.byteLength(filename);
++    const fnameLen = getStringLen(filename);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + fnameLen);
+ 
+@@ -744,7 +807,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, fnameLen, p);
+-    buf.utf8Write(filename, p += 4, fnameLen);
++    writeString(buf, p += 4, filename, fnameLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -762,8 +825,8 @@ class SFTP extends EventEmitter {
+       string     oldpath
+       string     newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + oldLen + 4 + newLen);
+ 
+@@ -773,9 +836,9 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, oldLen, p);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -806,7 +869,7 @@ class SFTP extends EventEmitter {
+       string     path
+       ATTRS      attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
+ 
+@@ -816,7 +879,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+       p += 4;
+@@ -844,7 +907,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -854,7 +917,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -987,7 +1050,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -997,7 +1060,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1014,7 +1077,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1024,7 +1087,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1041,7 +1104,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1051,7 +1114,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1080,7 +1143,7 @@ class SFTP extends EventEmitter {
+       string     path
+       ATTRS      attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen + 4 + attrsLen);
+ 
+@@ -1090,7 +1153,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+       p += 4;
+@@ -1205,7 +1268,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1215,7 +1278,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1243,8 +1306,8 @@ class SFTP extends EventEmitter {
+       string     linkpath
+       string     targetpath
+     */
+-    const linkLen = Buffer.byteLength(linkPath);
+-    const targetLen = Buffer.byteLength(targetPath);
++    const linkLen = getStringLen(linkPath);
++    const targetLen = getStringLen(targetPath);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + linkLen + 4 + targetLen);
+ 
+@@ -1256,14 +1319,14 @@ class SFTP extends EventEmitter {
+     if (this._isOpenSSH) {
+       // OpenSSH has linkpath and targetpath positions switched
+       writeUInt32BE(buf, targetLen, p);
+-      buf.utf8Write(targetPath, p += 4, targetLen);
++      writeString(buf, p += 4, targetPath, targetLen);
+       writeUInt32BE(buf, linkLen, p += targetLen);
+-      buf.utf8Write(linkPath, p += 4, linkLen);
++      writeString(buf, p += 4, linkPath, linkLen);
+     } else {
+       writeUInt32BE(buf, linkLen, p);
+-      buf.utf8Write(linkPath, p += 4, linkLen);
++      writeString(buf, p += 4, linkPath, linkLen);
+       writeUInt32BE(buf, targetLen, p += linkLen);
+-      buf.utf8Write(targetPath, p += 4, targetLen);
++      writeString(buf, p += 4, targetPath, targetLen);
+     }
+ 
+     this._requests[reqid] = { cb };
+@@ -1281,7 +1344,7 @@ class SFTP extends EventEmitter {
+       uint32     id
+       string     path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + pathLen);
+ 
+@@ -1291,7 +1354,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, pathLen, p);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1325,8 +1388,8 @@ class SFTP extends EventEmitter {
+       string    oldpath
+       string    newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 24 + 4 + oldLen + 4 + newLen);
+@@ -1337,11 +1400,11 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 24, p);
+-    buf.utf8Write('posix-rename@openssh.com', p += 4, 24);
++    writeString(buf, p += 4, 'posix-rename@openssh.com', 24);
+     writeUInt32BE(buf, oldLen, p += 24);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1364,7 +1427,7 @@ class SFTP extends EventEmitter {
+       string    "statvfs@openssh.com"
+       string    path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 19 + 4 + pathLen);
+ 
+@@ -1374,9 +1437,9 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 19, p);
+-    buf.utf8Write('statvfs@openssh.com', p += 4, 19);
++    writeString(buf, p += 4, 'statvfs@openssh.com', 19);
+     writeUInt32BE(buf, pathLen, p += 19);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = { extended: 'statvfs@openssh.com', cb };
+ 
+@@ -1411,7 +1474,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('fstatvfs@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'fstatvfs@openssh.com', 20);
+     writeUInt32BE(buf, handleLen, p += 20);
+     buf.set(handle, p += 4);
+ 
+@@ -1437,8 +1500,8 @@ class SFTP extends EventEmitter {
+       string    oldpath
+       string    newpath
+     */
+-    const oldLen = Buffer.byteLength(oldPath);
+-    const newLen = Buffer.byteLength(newPath);
++    const oldLen = getStringLen(oldPath);
++    const newLen = getStringLen(newPath);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + oldLen + 4 + newLen);
+@@ -1449,11 +1512,11 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('hardlink@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'hardlink@openssh.com', 20);
+     writeUInt32BE(buf, oldLen, p += 20);
+-    buf.utf8Write(oldPath, p += 4, oldLen);
++    writeString(buf, p += 4, oldPath, oldLen);
+     writeUInt32BE(buf, newLen, p += oldLen);
+-    buf.utf8Write(newPath, p += 4, newLen);
++    writeString(buf, p += 4, newPath, newLen);
+ 
+     this._requests[reqid] = { cb };
+ 
+@@ -1488,7 +1551,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 17, p);
+-    buf.utf8Write('fsync@openssh.com', p += 4, 17);
++    writeString(buf, p += 4, 'fsync@openssh.com', 17);
+     writeUInt32BE(buf, handleLen, p += 17);
+     buf.set(handle, p += 4);
+ 
+@@ -1524,7 +1587,7 @@ class SFTP extends EventEmitter {
+       string    path
+       ATTRS     attrs
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf =
+       Buffer.allocUnsafe(4 + 1 + 4 + 4 + 20 + 4 + pathLen + 4 + attrsLen);
+@@ -1535,10 +1598,10 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 20, p);
+-    buf.utf8Write('lsetstat@openssh.com', p += 4, 20);
++    writeString(buf, p += 4, 'lsetstat@openssh.com', 20);
+ 
+     writeUInt32BE(buf, pathLen, p += 20);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     writeUInt32BE(buf, flags, p += pathLen);
+     if (attrsLen) {
+@@ -1573,7 +1636,7 @@ class SFTP extends EventEmitter {
+       string    "expand-path@openssh.com"
+       string    path
+     */
+-    const pathLen = Buffer.byteLength(path);
++    const pathLen = getStringLen(path);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 23 + 4 + pathLen);
+ 
+@@ -1583,10 +1646,10 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, reqid, 5);
+ 
+     writeUInt32BE(buf, 23, p);
+-    buf.utf8Write('expand-path@openssh.com', p += 4, 23);
++    writeString(buf, p += 4, 'expand-path@openssh.com', 23);
+ 
+     writeUInt32BE(buf, pathLen, p += 20);
+-    buf.utf8Write(path, p += 4, pathLen);
++    writeString(buf, p += 4, path, pathLen);
+ 
+     this._requests[reqid] = {
+       cb: (err, names) => {
+@@ -1653,7 +1716,7 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 9, p);
+     p += 4;
+-    buf.utf8Write('copy-data', p, 9);
++    writeString(buf, p, 'copy-data', 9);
+     p += 9;
+ 
+     writeUInt32BE(buf, srcHandle.length, p);
+@@ -1708,7 +1771,7 @@ class SFTP extends EventEmitter {
+       string    username
+     */
+     let p = 0;
+-    const usernameLen = Buffer.byteLength(username);
++    const usernameLen = getStringLen(username);
+     const buf = Buffer.allocUnsafe(
+       4 + 1
+       + 4
+@@ -1728,12 +1791,12 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 14, p);
+     p += 4;
+-    buf.utf8Write('home-directory', p, 14);
++    writeString(buf, p, 'home-directory', 14);
+     p += 14;
+ 
+     writeUInt32BE(buf, usernameLen, p);
+     p += 4;
+-    buf.utf8Write(username, p, usernameLen);
++    writeString(buf, p, username, usernameLen);
+     p += usernameLen;
+ 
+     this._requests[reqid] = {
+@@ -1806,7 +1869,7 @@ class SFTP extends EventEmitter {
+ 
+     writeUInt32BE(buf, 30, p);
+     p += 4;
+-    buf.utf8Write('users-groups-by-id@openssh.com', p, 30);
++    writeString(buf, p, 'users-groups-by-id@openssh.com', 30);
+     p += 30;
+ 
+     writeUInt32BE(buf, 4 * uids.length, p);
+@@ -1871,7 +1934,7 @@ class SFTP extends EventEmitter {
+ 
+     message || (message = '');
+ 
+-    const msgLen = Buffer.byteLength(message);
++    const msgLen = getStringLen(message);
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + 4 + msgLen + 4);
+ 
+@@ -1884,7 +1947,7 @@ class SFTP extends EventEmitter {
+     writeUInt32BE(buf, msgLen, p += 4);
+     p += 4;
+     if (msgLen) {
+-      buf.utf8Write(message, p, msgLen);
++      writeString(buf, p, message, msgLen);
+       p += msgLen;
+     }
+ 
+@@ -1913,7 +1976,7 @@ class SFTP extends EventEmitter {
+     const dataLen = (
+       isBuffer
+       ? data.length
+-      : Buffer.byteLength(data, encoding)
++      : getStringLen(data, encoding)
+     );
+     let p = 9;
+     const buf = Buffer.allocUnsafe(4 + 1 + 4 + 4 + dataLen);
+@@ -1927,7 +1990,7 @@ class SFTP extends EventEmitter {
+       if (isBuffer)
+         buf.set(data, p += 4);
+       else if (isUTF8)
+-        buf.utf8Write(data, p += 4, dataLen);
++        writeString(buf, p += 4, data, dataLen);
+       else
+         buf.write(data, p += 4, dataLen, encoding);
+     }
+@@ -1959,13 +2022,13 @@ class SFTP extends EventEmitter {
+         ? ''
+         : name.filename
+       );
+-      namesLen += 4 + Buffer.byteLength(filename);
++      namesLen += 4 + getStringLen(filename);
+       const longname = (
+         !name || !name.longname || typeof name.longname !== 'string'
+         ? ''
+         : name.longname
+       );
+-      namesLen += 4 + Buffer.byteLength(longname);
++      namesLen += 4 + getStringLen(longname);
+ 
+       if (typeof name.attrs === 'object' && name.attrs !== null) {
+         nameAttrs = attrsToBytes(name.attrs);
+@@ -2011,11 +2074,11 @@ class SFTP extends EventEmitter {
+           ? ''
+           : name.filename
+         );
+-        const len = Buffer.byteLength(filename);
++        const len = getStringLen(filename);
+         writeUInt32BE(buf, len, p);
+         p += 4;
+         if (len) {
+-          buf.utf8Write(filename, p, len);
++          writeString(buf, p, filename, len);
+           p += len;
+         }
+       }
+@@ -2026,11 +2089,11 @@ class SFTP extends EventEmitter {
+           ? ''
+           : name.longname
+         );
+-        const len = Buffer.byteLength(longname);
++        const len = getStringLen(longname);
+         writeUInt32BE(buf, len, p);
+         p += 4;
+         if (len) {
+-          buf.utf8Write(longname, p, len);
++          writeString(buf, p, longname, len);
+           p += len;
+         }
+       }
+@@ -2749,7 +2812,7 @@ function requestLimits(sftp, cb) {
+   writeUInt32BE(buf, reqid, 5);
+ 
+   writeUInt32BE(buf, 18, p);
+-  buf.utf8Write('limits@openssh.com', p += 4, 18);
++  writeString(buf, p += 4, 'limits@openssh.com', 18);
+ 
+   sftp._requests[reqid] = { extended: 'limits@openssh.com', cb };
+ 
+@@ -2953,18 +3016,28 @@ const CLIENT_HANDLERS = {
+         // spec not specifying an encoding because the specs for newer
+         // versions of the protocol all explicitly specify UTF-8 for
+         // filenames
+-        const filename = bufferParser.readString(true);
++        const filenameRaw = bufferParser.readString();
++        if (filenameRaw === undefined) {
++          names = undefined;
++          break;
++        }
++        const filename = filenameRaw.toString('utf8');
+ 
+         // `longname` only exists in SFTPv3 and since it typically will
+         // contain the filename, we assume it is also UTF-8
+-        const longname = bufferParser.readString(true);
++        const longnameRaw = bufferParser.readString();
++        if (longnameRaw === undefined) {
++          names = undefined;
++          break;
++        }
++        const longname = longnameRaw.toString('utf8');
+ 
+         const attrs = readAttrs(sftp._biOpt);
+         if (attrs === undefined) {
+           names = undefined;
+           break;
+         }
+-        names.push({ filename, longname, attrs });
++        names.push({ filename, longname, filenameRaw, longnameRaw, attrs });
+       }
+       if (names !== undefined) {
+         sftp._debug && sftp._debug(
+diff --git a/node_modules/ssh2/lib/protocol/constants.js b/node_modules/ssh2/lib/protocol/constants.js
+index ad77592..4b3f71a 100644
+--- a/node_modules/ssh2/lib/protocol/constants.js
++++ b/node_modules/ssh2/lib/protocol/constants.js
+@@ -160,6 +160,7 @@ const COMPAT = {
+   DYN_RPORT_BUG: 1 << 2,
+   BUG_DHGEX_LARGE: 1 << 3,
+   IMPLY_RSA_SHA2_SIGALGS: 1 << 4,
++  COMWARE_DHGEX_1024: 1 << 5,
+ };
+ 
+ module.exports = {
+@@ -330,6 +331,7 @@ module.exports = {
+   COMPAT_CHECKS: [
+     [ 'Cisco-1.25', COMPAT.BAD_DHGEX ],
+     [ /^Cisco-1[.]/, COMPAT.BUG_DHGEX_LARGE ],
++    [ /^Comware-/, COMPAT.COMWARE_DHGEX_1024 ],
+     [ /^[0-9.]+$/, COMPAT.OLD_EXIT ], // old SSH.com implementations
+     [ /^OpenSSH_5[.][0-9]+/, COMPAT.DYN_RPORT_BUG ],
+     [ /^OpenSSH_7[.]4/, COMPAT.IMPLY_RSA_SHA2_SIGALGS ],
+diff --git a/node_modules/ssh2/lib/protocol/kex.js b/node_modules/ssh2/lib/protocol/kex.js
+index 811e631..4b5f792 100644
+--- a/node_modules/ssh2/lib/protocol/kex.js
++++ b/node_modules/ssh2/lib/protocol/kex.js
+@@ -1377,8 +1377,13 @@ const createKeyExchange = (() => {
+       this._generator = null;
+       this._minBits = GEX_MIN_BITS;
+       this._prefBits = dhEstimate(this.negotiated);
+-      if (this._protocol._compatFlags & COMPAT.BUG_DHGEX_LARGE)
++      if (hashName === 'sha1'
++          && (this._protocol._compatFlags & COMPAT.COMWARE_DHGEX_1024)) {
++        this._minBits = 1024;
++        this._prefBits = 1024;
++      } else if (this._protocol._compatFlags & COMPAT.BUG_DHGEX_LARGE) {
+         this._prefBits = Math.min(this._prefBits, 4096);
++      }
+       this._maxBits = GEX_MAX_BITS;
+     }
+     start() {
+diff --git a/node_modules/ssh2/lib/protocol/keyParser.js b/node_modules/ssh2/lib/protocol/keyParser.js
+index a276c1a..df123fd 100644
+--- a/node_modules/ssh2/lib/protocol/keyParser.js
++++ b/node_modules/ssh2/lib/protocol/keyParser.js
+@@ -1186,6 +1186,26 @@ function OpenSSH_Public(type, comment, pubPEM, pubSSH, algo) {
+   this[SYM_DECRYPTED] = false;
+ }
+ OpenSSH_Public.prototype = BaseKey;
++
++function isOpenSSHCertType(type) {
++  return (typeof type === 'string'
++          && /-cert-v0[01]@openssh\.com$/.test(type));
++}
++
++function getOpenSSHCertBaseType(type) {
++  if (!isOpenSSHCertType(type))
++    return type;
++
++  const baseType = type.replace(/-cert-v0[01]@openssh\.com$/, '');
++  switch (baseType) {
++    case 'rsa-sha2-256':
++    case 'rsa-sha2-512':
++      return 'ssh-rsa';
++    default:
++      return baseType;
++  }
++}
++
+ {
+   let regexp;
+   if (eddsaSupported)
+@@ -1210,7 +1230,13 @@ OpenSSH_Public.prototype = BaseKey;
+     if (type === undefined || type.indexOf(baseType) !== 0)
+       return new Error('Malformed OpenSSH public key');
+ 
+-    return parseDER(data, baseType, comment, fullType);
++    return parseDER(
++      data,
++      baseType,
++      comment,
++      fullType,
++      isOpenSSHCertType(fullType) ? data : undefined
++    );
+   };
+ }
+ 
+@@ -1309,7 +1335,7 @@ RFC4716_Public.prototype = BaseKey;
+ }
+ 
+ 
+-function parseDER(data, baseType, comment, fullType) {
++function parseDER(data, baseType, comment, fullType, originalPubSSH) {
+   if (!isSupportedKeyType(baseType))
+     return new Error(`Unsupported OpenSSH public key type: ${baseType}`);
+ 
+@@ -1317,6 +1343,10 @@ function parseDER(data, baseType, comment, fullType) {
+   let oid;
+   let pubPEM = null;
+   let pubSSH = null;
++  const isCertificate = isOpenSSHCertType(fullType);
++
++  if (isCertificate && !skipFields(data, 1))
++    return new Error('Malformed OpenSSH public key');
+ 
+   switch (baseType) {
+     case 'ssh-rsa': {
+@@ -1387,7 +1417,13 @@ function parseDER(data, baseType, comment, fullType) {
+       return new Error(`Unsupported OpenSSH public key type: ${baseType}`);
+   }
+ 
+-  return new OpenSSH_Public(fullType, comment, pubPEM, pubSSH, algo);
++  return new OpenSSH_Public(
++    fullType,
++    comment,
++    pubPEM,
++    isCertificate ? Buffer.from(originalPubSSH || data) : pubSSH,
++    algo
++  );
+ }
+ 
+ function isSupportedKeyType(type) {
+@@ -1460,7 +1496,13 @@ function parseKey(data, passphrase) {
+     if (type !== undefined) {
+       data = binaryKeyParser.readRaw();
+       if (data !== undefined) {
+-        ret = parseDER(data, type, '', type);
++        ret = parseDER(
++          data,
++          getOpenSSHCertBaseType(type),
++          '',
++          type,
++          isOpenSSHCertType(type) ? origBuffer : undefined
++        );
+         // Ignore potentially useless errors in case the data was not actually
+         // in the binary format
+         if (ret instanceof Error)
