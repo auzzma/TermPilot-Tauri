@@ -52,8 +52,10 @@ jobs:
       - name: Install cargo-xwin
         run: cargo install cargo-xwin --version 0.23.0 --locked
 
-      - name: Install NSIS
-        run: brew install nsis
+      - name: Install LLVM and NSIS
+        run: |
+          brew install llvm nsis
+          echo "$(brew --prefix llvm)/bin" >> "$GITHUB_PATH"
 
       - name: Install dependencies
         run: npm ci
