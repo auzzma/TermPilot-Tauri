@@ -50,6 +50,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
 The Windows portable edition stores both the database and encryption key in `data/`. Restrict access to the entire application directory to trusted users.
 
+## Community
+
+Telegram: [https://t.me/Impart_Chat](https://t.me/Impart_Chat)
+
 ## License
 
 GPL-3.0-or-later

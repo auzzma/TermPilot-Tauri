@@ -50,6 +50,10 @@ cargo test --manifest-path src-tauri/Cargo.toml --all-targets
 
 Windows 便携版的数据库与加密密钥位于同一 `data` 目录，请仅允许可信用户访问整个应用目录。
 
+## 交流群
+
+Telegram：[https://t.me/Impart_Chat](https://t.me/Impart_Chat)
+
 ## License
 
 GPL-3.0-or-later
