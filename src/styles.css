@@ -3665,13 +3665,13 @@ body.is-dragging-tab {
   padding-top: 7px;
 }
 
-.quick-connect-row>div {
+.quick-connect-row>div:not(.revealable-password-field) {
   display: grid;
   grid-template-columns: minmax(0, 1fr) auto;
   gap: 7px;
 }
 
-.quick-connect-row>div input {
+.quick-connect-row>div:not(.revealable-password-field) input {
   min-width: 0;
   height: 29px;
   padding: 0 8px;
@@ -8046,6 +8046,67 @@ body.is-dragging-tab {
 .host-editor-password-field>button:hover {
   color: var(--text-primary);
   background: var(--bg-hover);
+}
+
+.revealable-password-field {
+  display: flex;
+  align-items: center;
+  width: 100%;
+  max-width: 100%;
+  padding-right: 2px;
+  background: var(--bg-app);
+  border: 1px solid var(--border-strong);
+  border-radius: 5px;
+  box-shadow: inset 0 1px 2px rgb(0 0 0 / 10%);
+}
+
+.revealable-password-field:focus-within {
+  border-color: var(--accent);
+  box-shadow:
+    0 0 0 3px color-mix(in srgb, var(--accent) 30%, transparent),
+    inset 0 1px 2px rgb(0 0 0 / 10%);
+}
+
+.revealable-password-field>input {
+  flex: 1;
+  min-width: 0;
+  min-height: 27px;
+  padding: 4px 8px;
+  text-align: left;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+  font-size: 12px;
+}
+
+.revealable-password-field>input:focus {
+  outline: none;
+  background: transparent;
+  border: 0;
+  box-shadow: none;
+}
+
+.revealable-password-field>button {
+  display: grid;
+  flex: none;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  padding: 0;
+  color: var(--text-secondary);
+  background: transparent;
+  border: 0;
+  border-radius: 5px;
+}
+
+.revealable-password-field>button:hover:not(:disabled) {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+}
+
+.revealable-password-field>button:disabled {
+  opacity: 0.4;
+  cursor: default;
 }
 
 .host-editor-segmented {

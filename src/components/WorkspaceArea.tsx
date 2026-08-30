@@ -32,7 +32,13 @@ import {
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
 import { getCurrentWindow } from "@tauri-apps/api/window";
-import { useEffect, useMemo, useRef, useState } from "react";
+import {
+  useEffect,
+  useLayoutEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { createPortal, flushSync } from "react-dom";
 
 import {
@@ -268,6 +274,31 @@ export function WorkspaceArea() {
     active?.id,
     activeSidePanel?.selected,
     activeSidePanelSession?.kind,
+  ]);
+
+  useLayoutEffect(() => {
+    if (
+      !active ||
+      !activeSession ||
+      !activeSidePanel ||
+      activeSidePanel.sourceSessionId === activeSession.id
+    ) {
+      return;
+    }
+    closeSidePanelConnection(activeSidePanel);
+    const host = hostForSession(activeSession.id);
+    setSidePanels((panels) =>
+      retargetWorkspaceSidePanel(
+        panels,
+        active.id,
+        activeSession.id,
+        host?.id,
+      ),
+    );
+  }, [
+    active?.id,
+    activeSession?.id,
+    activeSidePanel?.sourceSessionId,
   ]);
 
   useEffect(() => {
@@ -2915,6 +2946,23 @@ export function bindWorkspaceSidePanel(
       hostId,
     },
   };
+}
+
+export function retargetWorkspaceSidePanel(
+  panels: WorkspaceSidePanels,
+  workspaceId: string,
+  sourceSessionId: string,
+  hostId?: string,
+) {
+  const panel = panels[workspaceId];
+  if (!panel || panel.sourceSessionId === sourceSessionId) return panels;
+  return bindWorkspaceSidePanel(
+    panels,
+    workspaceId,
+    sourceSessionId,
+    panel.selected,
+    hostId,
+  );
 }
 
 export function selectWorkspaceSidePanel(

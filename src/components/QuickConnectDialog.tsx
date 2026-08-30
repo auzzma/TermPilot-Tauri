@@ -9,6 +9,7 @@ import type {
   Host,
 } from "../types";
 import { useTranslation } from "../i18n";
+import { RevealablePasswordInput } from "./RevealablePasswordInput";
 
 const QUICK_CONNECT_EVENT = "termpilot:quick-connect";
 type ServerToolsMode = "disabled" | "sudo" | "su";
@@ -174,10 +175,7 @@ export function QuickConnectDialog() {
       sftpUsesSudo: false,
       sftpFollowsTerminalCwd: true,
       ...serverToolsConfiguration(serverToolsMode),
-      elevationPassword:
-        serverToolsMode !== "disabled" && elevationPassword
-          ? elevationPassword
-          : undefined,
+      elevationPassword: elevationPassword || undefined,
       createdAt: timestamp,
       updatedAt: timestamp,
     };
@@ -287,10 +285,9 @@ export function QuickConnectDialog() {
             <>
               <label className="quick-connect-row">
                 <span className="quick-connect-label">{t("Password")}</span>
-                <input
-                  type="password"
+                <RevealablePasswordInput
                   value={password}
-                  onChange={(event) => setPassword(event.target.value)}
+                  onChange={setPassword}
                 />
               </label>
               <p className="quick-connect-help quick-connect-indented">
@@ -339,10 +336,9 @@ export function QuickConnectDialog() {
               </label>
               <label className="quick-connect-row">
                 <span className="quick-connect-label">{t("Passphrase")}</span>
-                <input
-                  type="password"
+                <RevealablePasswordInput
                   value={passphrase}
-                  onChange={(event) => setPassphrase(event.target.value)}
+                  onChange={setPassphrase}
                 />
               </label>
               <label className="quick-connect-row quick-connect-textarea-row">
@@ -387,13 +383,10 @@ export function QuickConnectDialog() {
             {serverToolsMode !== "disabled" ? (
               <label className="quick-server-tools-password">
                 <span>{t("Elevation Password")}</span>
-                <input
+                <RevealablePasswordInput
                   autoComplete="new-password"
-                  type="password"
                   value={elevationPassword}
-                  onChange={(event) =>
-                    setElevationPassword(event.target.value)
-                  }
+                  onChange={setElevationPassword}
                 />
                 <small>
                   {t(

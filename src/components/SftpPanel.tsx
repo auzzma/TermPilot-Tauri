@@ -28,8 +28,11 @@ import {
   X,
 } from "lucide-react";
 import { invoke } from "@tauri-apps/api/core";
-import { listen } from "@tauri-apps/api/event";
-import { getCurrentWindow } from "@tauri-apps/api/window";
+import { type Event as TauriEvent, listen } from "@tauri-apps/api/event";
+import {
+  getCurrentWindow,
+  type DragDropEvent,
+} from "@tauri-apps/api/window";
 import { open, save } from "@tauri-apps/plugin-dialog";
 import {
   useEffect,
@@ -51,6 +54,18 @@ interface LocalEntry {
   kind: "file" | "directory" | "other";
   size: number;
   modifiedAt?: string;
+}
+
+export function createDisposableHandler<T>(handler: (value: T) => void) {
+  let disposed = false;
+  return {
+    handle(value: T) {
+      if (!disposed) handler(value);
+    },
+    dispose() {
+      disposed = true;
+    },
+  };
 }
 
 export interface RemoteTextDraft {
@@ -369,26 +384,32 @@ export function SftpPanel({
   useEffect(() => {
     if (!active || !host) return;
     document.documentElement.dataset.fileDropTarget = "sftp";
-    const listener = getCurrentWindow().onDragDropEvent((event) => {
-      if (event.payload.type === "enter" || event.payload.type === "over") {
-        setExternalDragActive(true);
-        return;
-      }
-      setExternalDragActive(false);
-      if (event.payload.type !== "drop" || event.payload.paths.length === 0) {
-        return;
-      }
-      void Promise.all(
-        event.payload.paths.map((path) =>
-          invoke<LocalEntry>("local_entry", { path }),
-        ),
-      )
-        .then((entries) => uploadBatch(entries))
-        .catch((reason: unknown) => setError(message(reason)));
-    });
+    const dragHandler = createDisposableHandler<TauriEvent<DragDropEvent>>(
+      (event) => {
+        if (event.payload.type === "enter" || event.payload.type === "over") {
+          setExternalDragActive(true);
+          return;
+        }
+        setExternalDragActive(false);
+        if (event.payload.type !== "drop" || event.payload.paths.length === 0) {
+          return;
+        }
+        void Promise.all(
+          event.payload.paths.map((path) =>
+            invoke<LocalEntry>("local_entry", { path }),
+          ),
+        )
+          .then((entries) => uploadBatch(entries))
+          .catch((reason: unknown) => setError(message(reason)));
+      },
+    );
+    const listener = getCurrentWindow().onDragDropEvent(dragHandler.handle);
     return () => {
+      dragHandler.dispose();
       delete document.documentElement.dataset.fileDropTarget;
-      void listener.then((unlisten) => unlisten());
+      void listener
+        .then((unlisten) => unlisten())
+        .catch(() => undefined);
     };
   }, [active, host, remoteEntries, remotePath]);
 

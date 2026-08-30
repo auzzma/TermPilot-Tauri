@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 
 import {
   batchConflictWindowHeight,
+  createDisposableHandler,
   duplicateName,
   flattenRemoteTree,
   localJoin,
@@ -18,6 +19,21 @@ describe("SFTP selection", () => {
     expect(updateSelection(["one"], "two", false)).toEqual(["two"]);
     expect(updateSelection(["one"], "two", true)).toEqual(["one", "two"]);
     expect(updateSelection(["one", "two"], "one", true)).toEqual(["two"]);
+  });
+});
+
+describe("SFTP drag listener lifecycle", () => {
+  it("stops handling events immediately after disposal", () => {
+    const events: string[] = [];
+    const listener = createDisposableHandler((event: string) => {
+      events.push(event);
+    });
+
+    listener.handle("before");
+    listener.dispose();
+    listener.handle("after");
+
+    expect(events).toEqual(["before"]);
   });
 });
 

@@ -1,6 +1,6 @@
 [package]
 name = "termpilot"
-version = "0.1.5"
+version = "0.1.6"
 description = "TermPilot cross-platform desktop application"
 authors = ["TermPilot"]
 edition = "2021"

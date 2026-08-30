@@ -12,8 +12,6 @@ import {
   Copy,
   Cpu,
   Database,
-  Eye,
-  EyeOff,
   Folder,
   FolderCog,
   FolderOpen,
@@ -60,6 +58,7 @@ import type {
   SplitAxis,
 } from "../types";
 import { useTranslation } from "../i18n";
+import { RevealablePasswordInput } from "./RevealablePasswordInput";
 import {
   TextPrompt,
   type TextPromptState,
@@ -1465,7 +1464,7 @@ function HostEditor({ host, onClose }: { host: Host; onClose: () => void }) {
                   </HostEditorRow>
                   {draft.authentication === "password" ? (
                     <HostEditorRow label="Password">
-                      <RevealableHostEditorInput
+                      <RevealablePasswordInput
                         placeholder={
                           host.password
                             ? t("Leave blank to keep current")
@@ -1844,7 +1843,7 @@ function HostEditor({ host, onClose }: { host: Host; onClose: () => void }) {
                           />
                         </HostEditorRow>
                         <HostEditorRow label="Password">
-                          <RevealableHostEditorInput
+                          <RevealablePasswordInput
                             value={
                               draft.proxyConfiguration?.password ?? ""
                             }
@@ -1927,37 +1926,6 @@ function HostEditorRow({
     <div className="host-editor-row">
       <strong>{t(label)}</strong>
       {children}
-    </div>
-  );
-}
-
-function RevealableHostEditorInput({
-  value,
-  placeholder,
-  onChange,
-}: {
-  value: string;
-  placeholder?: string;
-  onChange: (value: string) => void;
-}) {
-  const t = useTranslation();
-  const [isRevealed, setIsRevealed] = useState(false);
-  return (
-    <div className="host-editor-password-field">
-      <input
-        placeholder={placeholder}
-        type={isRevealed ? "text" : "password"}
-        value={value}
-        onChange={(event) => onChange(event.target.value)}
-      />
-      <button
-        aria-label={t(isRevealed ? "Hide Password" : "Show Password")}
-        title={t(isRevealed ? "Hide Password" : "Show Password")}
-        type="button"
-        onClick={() => setIsRevealed((current) => !current)}
-      >
-        {isRevealed ? <EyeOff size={13} /> : <Eye size={13} />}
-      </button>
     </div>
   );
 }

@@ -5,6 +5,7 @@ import {
   bindWorkspaceSidePanel,
   parseCommandHistory,
   parseForwardEndpoint,
+  retargetWorkspaceSidePanel,
   resolveSplitDrop,
   resolveTabInsertionFromFrames,
   resolveWorkspaceDetachTarget,
@@ -203,6 +204,29 @@ describe("workspace side panel connection persistence", () => {
       selected: "history",
       sourceSessionId: "source-session",
       hostId: "host",
+    });
+  });
+
+  it("retargets the open panel when the focused session changes", () => {
+    const panels = bindWorkspaceSidePanel(
+      {},
+      "workspace",
+      "session-a",
+      "sftp",
+      "host-a",
+    );
+
+    const retargeted = retargetWorkspaceSidePanel(
+      panels,
+      "workspace",
+      "session-b",
+      "host-b",
+    );
+
+    expect(retargeted.workspace).toEqual({
+      selected: "sftp",
+      sourceSessionId: "session-b",
+      hostId: "host-b",
     });
   });
 });

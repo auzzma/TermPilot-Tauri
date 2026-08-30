@@ -47,6 +47,7 @@ import {
 } from "../credentialKeys";
 import { useTranslation } from "../i18n";
 import packageMetadata from "../../package.json";
+import { RevealablePasswordInput } from "./RevealablePasswordInput";
 import {
   batchSelectionState,
   buildHostGroupTree,
@@ -320,11 +321,10 @@ function CredentialPanel() {
           </Field>
           {draft.kind === "password" ? (
             <Field label="Password">
-              <input
-                type="password"
+              <RevealablePasswordInput
                 value={draft.password ?? ""}
-                onChange={(event) =>
-                  setDraft({ ...draft, password: event.target.value })
+                onChange={(value) =>
+                  setDraft({ ...draft, password: value })
                 }
               />
             </Field>
@@ -358,11 +358,10 @@ function CredentialPanel() {
                 />
               </Field>
               <Field label="Passphrase">
-                <input
-                  type="password"
+                <RevealablePasswordInput
                   value={draft.passphrase ?? ""}
-                  onChange={(event) =>
-                    setDraft({ ...draft, passphrase: event.target.value })
+                  onChange={(value) =>
+                    setDraft({ ...draft, passphrase: value })
                   }
                 />
               </Field>
@@ -382,13 +381,12 @@ function CredentialPanel() {
             </>
           )}
           <Field label="Elevation password">
-            <input
-              type="password"
+            <RevealablePasswordInput
               value={draft.elevationPassword ?? ""}
-              onChange={(event) =>
+              onChange={(value) =>
                 setDraft({
                   ...draft,
-                  elevationPassword: event.target.value,
+                  elevationPassword: value,
                 })
               }
             />
@@ -734,19 +732,15 @@ function CredentialCreationDialog({
           {protectsKey ? (
             <div className="credential-dialog-grid">
               <Field label="Passphrase">
-                <input
-                  type="password"
+                <RevealablePasswordInput
                   value={passphrase}
-                  onChange={(event) => setPassphrase(event.target.value)}
+                  onChange={setPassphrase}
                 />
               </Field>
               <Field label="Confirm Passphrase">
-                <input
-                  type="password"
+                <RevealablePasswordInput
                   value={confirmPassphrase}
-                  onChange={(event) =>
-                    setConfirmPassphrase(event.target.value)
-                  }
+                  onChange={setConfirmPassphrase}
                 />
               </Field>
             </div>
@@ -1289,15 +1283,14 @@ function ProxyPanel() {
               />
             </Field>
             <Field label="Password">
-              <input
-                type="password"
+              <RevealablePasswordInput
                 value={draft.configuration.password ?? ""}
-                onChange={(event) =>
+                onChange={(value) =>
                   setDraft({
                     ...draft,
                     configuration: {
                       ...draft.configuration,
-                      password: event.target.value,
+                      password: value,
                     },
                   })
                 }
@@ -2270,22 +2263,18 @@ function BackupPanel() {
             </header>
             <label>
               <span>{t("Backup Password")}</span>
-              <input
+              <RevealablePasswordInput
                 autoFocus
-                type="password"
                 value={password}
-                onChange={(event) => setPassword(event.target.value)}
+                onChange={setPassword}
               />
             </label>
             {confirmsPassword ? (
               <label>
                 <span>{t("Confirm Backup Password")}</span>
-                <input
-                  type="password"
+                <RevealablePasswordInput
                   value={confirmation}
-                  onChange={(event) =>
-                    setConfirmation(event.target.value)
-                  }
+                  onChange={setConfirmation}
                 />
               </label>
             ) : null}
